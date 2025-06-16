@@ -7,7 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import './App.css';
 
 // --- Configuration ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = 'https://story-generator-1-kkin.onrender.com';
 
 // --- Components ---
 const EpisodeWorkbench = ({ 
@@ -275,7 +275,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>StoryForge AI</h1>
+        <h1>LUNA</h1>
         <div className="style-selector">
           <label htmlFor="style-select">Style:</label>
           <select id="style-select" value={narrationStyle} onChange={e => setNarrationStyle(e.target.value)} disabled={appPhase !== 'AWAITING_BLUEPRINT'}>
