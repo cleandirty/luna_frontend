@@ -7,278 +7,187 @@ import rehypeRaw from 'rehype-raw';
 import './App.css';
 
 // --- Configuration ---
-const API_BASE_URL = 'https://story-generator-1-kkin.onrender.com';
+const API_BASE_URL = 'http://localhost:8000';
+
+// --- Initial State Definition ---
+const INITIAL_STORY_STATE = {
+  genre: null, setting: null, tone: null, raw_character_input: null, story_idea: null,
+  character_bible: null, world_bible: null, master_throughline: null,
+  completed_episodes: [],
+  current_episode_index: 0,
+  conversation_history: [],
+  narration_style: "default_contemporary.txt",
+  app_phase: "BLUEPRINT_COLLECTION",
+};
+
+// --- Helper to format AI thinking steps for the chat ---
+const formatToolMessage = (msg) => {
+  if (!msg.tool_calls || msg.tool_calls.length === 0) return msg.content;
+  const toolName = msg.tool_calls[0].function.name;
+  const messages = {
+    update_blueprint_tool: `[AI is updating the story blueprint...]`,
+    create_series_bibles_tool: `[AI is creating the World and Character Bibles...]`,
+    generate_initial_plan_tool: `[AI is drafting the story plan...]`,
+    revise_plan_summary_tool: `[AI is revising the plan based on your feedback...]`,
+    ask_strategic_question_for_next_episode_tool: `[AI is thinking of a strategic question...]`,
+    generate_episode_tool: `[AI is generating the episode...]`,
+  };
+  return messages[toolName] || `[AI is using the ${toolName} tool...]`;
+};
+
 
 // --- Components ---
-const EpisodeWorkbench = ({ 
-    outputs, 
-    beat, 
-    onRegenerate, 
-    onNextEpisode,
-    onPreviousEpisode,
-    isFirstEpisode,
-    isLastEpisode,
-    isLoading,
-    activeTab,      // <-- Receives state as a prop
-    setActiveTab    // <-- Receives function to change state as a prop
+const Workbench = ({ 
+    storyState,
+    viewingIndex,
+    onNavigate,
+    isLoading
 }) => {
-  if (!beat || !outputs) return null;
-  // The useState hook has been REMOVED from here. This is the fix.
+  const [activeTab, setActiveTab] = useState('throughline');
+  
+  useEffect(() => {
+    if (storyState.completed_episodes.length > viewingIndex) {
+        setActiveTab('story');
+    }
+  }, [viewingIndex, storyState.completed_episodes.length]);
+  
+  const currentBeat = storyState.master_throughline ? storyState.master_throughline[viewingIndex] : null;
+  const hasCompletedEpisodes = storyState.completed_episodes.length > 0;
+
+  const TABS = {
+    throughline: { label: '📜 Throughline', content: storyState.master_throughline ? storyState.master_throughline.map(b => `**Ep ${b.beat_number}: ${b.beat_title}**\n\n${b.summary}`).join('\n\n---\n\n') : 'The master plan has not been generated yet.' },
+    story: { label: '📖 Story', content: hasCompletedEpisodes ? storyState.completed_episodes[viewingIndex] : "No episodes have been generated yet." },
+    character: { label: '👥 Character Bible', content: storyState.character_bible || "The Character Bible has not been generated yet." },
+    world: { label: '🌍 World Bible', content: storyState.world_bible || "The World Bible has not been generated yet." },
+    plot: { label: '📝 Plot', content: "Note: Per-episode plot display is a planned enhancement." },
+  };
+
+  const isFirstEpisode = viewingIndex === 0;
+  const isLastEpisode = viewingIndex === storyState.completed_episodes.length - 1;
 
   return (
     <div className="workbench-container">
       <div className="workbench-header">
-        <h3>Episode {beat.beat_number}: {beat.beat_title}</h3>
+        {activeTab === 'story' && currentBeat ? 
+          <h3>Episode {currentBeat.beat_number}: {currentBeat.beat_title}</h3> :
+          <h3>{TABS[activeTab].label}</h3>
+        }
         <div className="workbench-tabs">
-          <button onClick={() => setActiveTab('narration')} className={activeTab === 'narration' ? 'active' : ''}>📖 Story</button>
-          <button onClick={() => setActiveTab('plot')} className={activeTab === 'plot' ? 'active' : ''}>📝 Plot</button>
-          <button onClick={() => setActiveTab('character')} className={activeTab === 'character' ? 'active' : ''}>👥 Character</button>
-          <button onClick={() => setActiveTab('world')} className={activeTab === 'world' ? 'active' : ''}>🌍 World</button>
+          {Object.keys(TABS).map(tabKey => {
+            if (!hasCompletedEpisodes && (tabKey === 'story' || tabKey === 'plot')) {
+              return null;
+            }
+            return (
+              <button key={tabKey} onClick={() => setActiveTab(tabKey)} className={activeTab === tabKey ? 'active' : ''}>
+                {TABS[tabKey].label}
+              </button>
+            );
+          })}
         </div>
       </div>
       <div className="workbench-content">
-        <ReactMarkdown rehypePlugins={[rehypeRaw]}>{outputs[activeTab] || `Loading ${activeTab}...`}</ReactMarkdown>
+        <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+          {TABS[activeTab].content}
+        </ReactMarkdown>
       </div>
-      <div className="workbench-actions">
-          <button onClick={onPreviousEpisode} disabled={isLoading || isFirstEpisode} className="prev-button">← Previous Episode</button>
-          <button onClick={onRegenerate} disabled={isLoading}>Rewrite this Episode</button>
-          <button onClick={onNextEpisode} disabled={isLoading} className="next-button">
-            {isLastEpisode ? 'Finish Series' : 'Next Episode →'}
-          </button>
-      </div>
+      {activeTab === 'story' && hasCompletedEpisodes && (
+        <div className="workbench-actions">
+            <button onClick={() => onNavigate(-1)} disabled={isLoading || isFirstEpisode}>← Previous</button>
+            <button onClick={() => onNavigate(1)} disabled={isLoading || isLastEpisode}>Next →</button>
+        </div>
+      )}
     </div>
   );
 };
 
 function App() {
-  // --- State Management (All hooks are at the top level) ---
-  const [messages, setMessages] = useState([]);
-  const [appPhase, setAppPhase] = useState('AWAITING_BLUEPRINT');
+  const [storyState, setStoryState] = useState(INITIAL_STORY_STATE);
+  const [viewingEpisodeIndex, setViewingEpisodeIndex] = useState(0);
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState('');
-  const [narrationStyle, setNarrationStyle] = useState('');
   const [availableStyles, setAvailableStyles] = useState([]);
-  const [blueprint, setBlueprint] = useState({
-    genre: null, setting: null, tone: null, raw_character_input: null, story_idea: null,
-  });
-  const [masterPlan, setMasterPlan] = useState(null);
-  const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(0);
-  const [workbenchOutputs, setWorkbenchOutputs] = useState(null);
-  const [generatedEpisodes, setGeneratedEpisodes] = useState([]);
-  const [activeTab, setActiveTab] = useState('narration'); // <-- HOOK IS CORRECTLY PLACED HERE
+  
   const messagesEndRef = useRef(null);
-
-  // --- Helper Functions ---
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
-  const addMessage = (text, role) => { setMessages(prev => [...prev, { text, role }]); };
-
-  // --- Effects ---
-  useEffect(scrollToBottom, [messages, workbenchOutputs]);
+  useEffect(scrollToBottom, [storyState.conversation_history]);
 
   useEffect(() => {
-    const fetchStyles = async () => {
+    const fetchStylesAndInit = async () => {
       try {
         const response = await axios.get(`${API_BASE_URL}/api/v1/styles`);
         setAvailableStyles(response.data);
-        if (response.data.length > 0) setNarrationStyle(response.data[0].id);
-        addMessage('Hello! Let\'s create a story series. To start, describe your idea in the chat.', 'ai');
-      } catch (error) { addMessage('**Error:** Could not connect to the AI server.', 'error'); }
+        const firstStyle = response.data.length > 0 ? response.data[0].id : "default_contemporary.txt";
+        
+        if (storyState.conversation_history.length === 0) {
+          const initialState = {
+            ...INITIAL_STORY_STATE,
+            narration_style: firstStyle,
+            conversation_history: [{ role: 'assistant', content: "Hello! Let's create a story. Please describe your idea." }]
+          };
+          setStoryState(initialState);
+        }
+      } catch (error) { 
+        const historyWithError = [...storyState.conversation_history, { role: 'assistant', content: '**Error:** Could not connect to the AI server. Please ensure the backend is running and refresh.' }];
+        setStoryState(prev => ({...prev, conversation_history: historyWithError }));
+      }
     };
-    fetchStyles();
+    fetchStylesAndInit();
   }, []);
-
-  // --- API Logic ---
-  const handleUserInput = async () => {
-    if (!userInput.trim() || isLoading) return;
-    addMessage(userInput, 'user');
-    const currentUserInput = userInput;
-    setUserInput('');
-    setIsLoading(true);
-
-    try {
-      if (appPhase === 'AWAITING_BLUEPRINT') {
-        const response = await axios.post(`${API_BASE_URL}/api/v1/blueprint/update`, { blueprint, new_message: currentUserInput });
-        setBlueprint(response.data.blueprint);
-        addMessage(response.data.ai_response_message, 'ai');
-        const isComplete = Object.values(response.data.blueprint).every(val => val !== null && val !== '');
-        if (isComplete) {
-          addMessage('**Blueprint complete! Generating master plan...**', 'system');
-          await generatePlan(response.data.blueprint);
-        }
-      } else if (appPhase === 'AWAITING_PLAN_REVIEW') {
-        addMessage('**Revising plan...**', 'system');
-        const reviseResponse = await axios.post(`${API_BASE_URL}/api/v1/plan/revise`, { master_throughline: masterPlan, user_feedback: currentUserInput });
-        setMasterPlan(reviseResponse.data);
-        addMessage('**Here is the revised plan:**', 'ai');
-        addMessage(formatPlan(reviseResponse.data), 'plan');
-      } else if (appPhase === 'AWAITING_EPISODE_INPUT') {
-        addMessage('**Great input! Generating episode...**', 'system');
-        await handleGenerateEpisode(currentEpisodeIndex, currentUserInput);
+  
+  useEffect(() => {
+      if (storyState.completed_episodes.length > 0) {
+        setViewingEpisodeIndex(storyState.completed_episodes.length - 1);
       }
-    } catch (error) {
-      addMessage(`**Error:** ${error.response?.data?.detail || error.message}`, 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [storyState.completed_episodes.length]);
 
-  const generatePlan = async (finalBlueprint) => {
+  const sendChatMessage = async (userMessage) => {
     setIsLoading(true);
-    setLoadingMessage('Generating story plan...');
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/plan/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...finalBlueprint, narration_style: narrationStyle })
-        });
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        const { value } = await reader.read();
-        const line = decoder.decode(value).split('\n').find(l => l.trim());
-        if (line) {
-            const parsed = JSON.parse(line);
-            if (parsed.status === 'completed') {
-                const planArray = JSON.parse(parsed.data.text);
-                setMasterPlan(planArray);
-                addMessage('**Here is the full story plan. You can ask for changes, or click the button below to start.**', 'ai');
-                addMessage(formatPlan(planArray), 'plan');
-                setAppPhase('PLAN_REVIEW');
-            } else { throw new Error(parsed.data?.text?.error || "Failed to get plan."); }
-        }
-    } catch (error) {
-        addMessage(`**Error generating plan:** ${error.message}`, 'error');
-        setAppPhase('AWAITING_BLUEPRINT');
-    } finally {
-        setIsLoading(false);
-        setLoadingMessage('');
-    }
-  };
-
-  const askForEpisodeInput = async (index) => {
-    setIsLoading(true);
-    setLoadingMessage('Preparing next episode...');
-    setWorkbenchOutputs(null);
-    setCurrentEpisodeIndex(index);
     
-    if (generatedEpisodes[index]) {
-      viewEpisode(index);
-      setIsLoading(false);
-      setLoadingMessage('');
-      return;
+    const updatedHistory = [...storyState.conversation_history];
+    if (userMessage) {
+        updatedHistory.push({ role: 'user', content: userMessage });
     }
+    
+    const stateToSend = { ...storyState, conversation_history: updatedHistory };
+    setStoryState(stateToSend);
+    setUserInput('');
 
     try {
-        const beat = masterPlan[index];
-        addMessage(`**Let's get ready for Episode ${beat.beat_number}: ${beat.beat_title}**\n\n> *${beat.summary}*`, 'system');
-        const response = await axios.post(`${API_BASE_URL}/api/v1/episode/ask-question`, {
-            master_throughline: masterPlan,
-            current_episode_index: index,
-            raw_character_input: blueprint.raw_character_input,
-            previous_episode_summary: index > 0 ? generatedEpisodes[index - 1]?.narration : null,
-        });
-        addMessage(response.data.question, 'ai');
-        setAppPhase('AWAITING_EPISODE_INPUT');
+      const response = await axios.post(`${API_BASE_URL}/api/v1/chat`, stateToSend);
+      setStoryState(response.data);
     } catch (error) {
-        addMessage(`**Error:** Could not prepare the next episode. Generating with default plan.`, 'error');
-        await handleGenerateEpisode(index, "continue");
+      const historyWithError = [...updatedHistory, { role: 'error', content: `**Error:** ${error.response?.data?.detail || error.message}` }];
+      setStoryState(prev => ({...prev, conversation_history: historyWithError }));
     } finally {
-        setIsLoading(false);
-        setLoadingMessage('');
+      setIsLoading(false);
     }
   };
 
-  const handleGenerateEpisode = async (index, feedback) => {
-    setIsLoading(true);
-    setLoadingMessage(`Generating Episode ${index + 1}...`);
-    let tempOutputs = { world: '', character: '', plot: '', narration: '' };
-    setWorkbenchOutputs(tempOutputs);
-    setActiveTab('narration');
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/episode/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-              ...blueprint,
-              narration_style: narrationStyle,
-              current_episode_index: index,
-              master_throughline: masterPlan,
-              beat_clarification_input: (feedback?.toLowerCase() === 'continue' ? null : feedback),
-              previous_episode_summary: index > 0 ? masterPlan[index - 1].summary : null,
-          })
-      });
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n').filter(line => line.trim() !== '');
-          for (const line of lines) {
-              try {
-                  const parsed = JSON.parse(line);
-                  setLoadingMessage(`Agent complete: ${parsed.agent}`);
-                  tempOutputs = { ...tempOutputs, [parsed.agent]: parsed.data.text };
-                  setWorkbenchOutputs(tempOutputs);
-              } catch (e) { console.error("JSON parsing error:", e); }
-          }
+  const handleSendMessage = () => {
+    if (!userInput.trim() || isLoading) return;
+    sendChatMessage(userInput);
+  };
+  
+  const handleNarrationStyleChange = (e) => {
+    setStoryState(prev => ({ ...prev, narration_style: e.target.value }));
+  };
+
+  const handleWorkbenchNavigate = (direction) => {
+      const newIndex = viewingEpisodeIndex + direction;
+      if (newIndex >= 0 && newIndex < storyState.completed_episodes.length) {
+          setViewingEpisodeIndex(newIndex);
       }
-      
-      const newGeneratedEpisodes = [...generatedEpisodes];
-      newGeneratedEpisodes[index] = tempOutputs;
-      setGeneratedEpisodes(newGeneratedEpisodes);
-
-      setAppPhase('EPISODE_DISPLAY');
-    } catch (error) {
-      addMessage(`**Error generating episode:** ${error.message}`, 'error');
-    } finally {
-      setIsLoading(false);
-      setLoadingMessage('');
-    }
-  };
-  
-  const handleRegenerate = () => {
-    const feedback = prompt("What changes would you like for this episode? (Leave blank for no changes)");
-    if (feedback !== null) handleGenerateEpisode(currentEpisodeIndex, feedback);
   }
 
-  const handleNextEpisode = () => {
-    const nextIndex = currentEpisodeIndex + 1;
-    if (nextIndex < masterPlan.length) {
-      askForEpisodeInput(nextIndex);
-    } else {
-      addMessage('**Congratulations, you have completed the series!**', 'ai');
-      setWorkbenchOutputs(null);
-      setAppPhase('COMPLETED');
-    }
-  }
-  
-  const handlePreviousEpisode = () => {
-    const prevIndex = currentEpisodeIndex - 1;
-    if (prevIndex >= 0) {
-      viewEpisode(prevIndex);
-    }
-  }
-
-  const viewEpisode = (index) => {
-    setCurrentEpisodeIndex(index);
-    setWorkbenchOutputs(generatedEpisodes[index]);
-    setAppPhase('EPISODE_DISPLAY');
-    setActiveTab('narration');
-  }
-
-  const formatPlan = (plan) => {
-    if (!Array.isArray(plan)) return "Invalid plan format.";
-    return plan.map(beat => `**Episode ${beat.beat_number}: ${beat.beat_title}**\n\n_${beat.summary}_`).join('\n\n---\n\n');
-  };
+  const showWorkbench = storyState.world_bible && storyState.character_bible;
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>LUNA</h1>
+        <h1>StoryForge AI</h1>
         <div className="style-selector">
           <label htmlFor="style-select">Style:</label>
-          <select id="style-select" value={narrationStyle} onChange={e => setNarrationStyle(e.target.value)} disabled={appPhase !== 'AWAITING_BLUEPRINT'}>
+          <select id="style-select" value={storyState.narration_style} onChange={handleNarrationStyleChange} disabled={!!storyState.master_throughline}>
             {availableStyles.map(style => <option key={style.id} value={style.id}>{style.displayName}</option>)}
           </select>
         </div>
@@ -287,18 +196,26 @@ function App() {
         <div className="chat-and-workbench">
           <div className="chat-container">
             <div className="message-list">
-              {messages.map((msg, index) => (
-                <div key={index} className={`message-wrapper ${msg.role}`}>
-                    <div className={`message-bubble`}>
-                      <ReactMarkdown rehypePlugins={[rehypeRaw]}>{msg.text}</ReactMarkdown>
+              {storyState.conversation_history.map((msg, index) => {
+                let content = msg.content;
+                let role = msg.role;
+                
+                if (role === 'assistant' && msg.tool_calls) {
+                  content = formatToolMessage(msg);
+                  role = 'tool';
+                }
+                
+                if (role === 'user' || role === 'assistant' || role === 'error' || role === 'system' || role === 'tool') {
+                  return (
+                    <div key={index} className={`message-wrapper ${role}`}>
+                        <div className="message-bubble">
+                          <ReactMarkdown rehypePlugins={[rehypeRaw]}>{content}</ReactMarkdown>
+                        </div>
                     </div>
-                </div>
-              ))}
-              {appPhase === 'PLAN_REVIEW' && masterPlan && (
-                <div className="action-panel">
-                  <button onClick={() => askForEpisodeInput(0)}>✨ Write Episode 1</button>
-                </div>
-              )}
+                  );
+                }
+                return null;
+              })}
               <div ref={messagesEndRef} />
             </div>
             <div className="input-area">
@@ -306,36 +223,24 @@ function App() {
                 type="text" 
                 value={userInput} 
                 onChange={(e) => setUserInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleUserInput()}
-                placeholder={
-                  (appPhase === 'AWAITING_BLUEPRINT' || appPhase === 'AWAITING_PLAN_REVIEW' || appPhase === 'AWAITING_EPISODE_INPUT') 
-                  ? 'Your instructions...' 
-                  : 'Chat disabled. Use workbench buttons.'}
-                disabled={isLoading || !['AWAITING_BLUEPRINT', 'AWAITING_PLAN_REVIEW', 'AWAITING_EPISODE_INPUT'].includes(appPhase)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                placeholder={isLoading ? "AI is thinking..." : "Your instructions..."}
+                disabled={isLoading}
               />
-              <button 
-                onClick={handleUserInput} 
-                disabled={isLoading || !['AWAITING_BLUEPRINT', 'AWAITING_PLAN_REVIEW', 'AWAITING_EPISODE_INPUT'].includes(appPhase)}>
+              <button onClick={handleSendMessage} disabled={isLoading}>
                 {isLoading ? 'Thinking...' : 'Send'}
               </button>
             </div>
           </div>
-          {appPhase === 'EPISODE_DISPLAY' && (
-            <EpisodeWorkbench 
-              outputs={workbenchOutputs} 
-              beat={masterPlan[currentEpisodeIndex]}
-              onRegenerate={handleRegenerate}
-              onNextEpisode={handleNextEpisode}
-              onPreviousEpisode={handlePreviousEpisode}
-              isFirstEpisode={currentEpisodeIndex === 0}
-              isLastEpisode={currentEpisodeIndex === masterPlan.length - 1 && generatedEpisodes[masterPlan.length-1]}
+          {showWorkbench && (
+            <Workbench 
+              storyState={storyState}
+              viewingIndex={viewingEpisodeIndex}
+              onNavigate={handleWorkbenchNavigate}
               isLoading={isLoading}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
             />
           )}
         </div>
-        {isLoading && loadingMessage && <div className="loading-banner">{loadingMessage}</div>}
       </main>
     </div>
   );

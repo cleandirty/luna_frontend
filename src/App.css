@@ -51,7 +51,7 @@ body {
 }
 
 .chat-and-workbench {
-  max-width: 1400px;
+  max-width: 1600px; /* Increased max-width for better two-panel view */
   margin: 0 auto;
   height: 100%;
   display: grid;
@@ -59,7 +59,7 @@ body {
   gap: 1.5rem;
 }
 
-/* Make layout two-column if there's a workbench */
+/* This CSS selector is the key: it activates the two-column layout only when the workbench exists */
 .chat-and-workbench:has(.workbench-container) {
     grid-template-columns: 1fr 1.5fr; /* Chat | Workbench */
 }
@@ -84,16 +84,24 @@ body {
 }
 
 .message-wrapper { display: flex; max-width: 100%; }
-.message-wrapper.ai, .message-wrapper.system, .message-wrapper.error, .message-wrapper.plan { justify-content: flex-start; }
+.message-wrapper.ai, .message-wrapper.system, .message-wrapper.error, .message-wrapper.tool { justify-content: flex-start; }
 .message-wrapper.user { justify-content: flex-end; }
-.message-bubble { padding: 0.75rem 1.25rem; border-radius: 18px; line-height: 1.5; max-width: 95%; }
+.message-bubble { padding: 0.75rem 1.25rem; border-radius: 18px; line-height: 1.5; max-width: 95%; word-wrap: break-word; }
 .message-wrapper.ai .message-bubble { background-color: #e9ecef; }
 .message-wrapper.user .message-bubble { background-color: var(--primary-color); color: white; }
-.message-wrapper.plan .message-bubble { background-color: #fff; border: 1px solid var(--border-color); width: 100%; box-sizing: border-box; }
+/* Tweak for better tool message visibility */
+.message-wrapper.tool .message-bubble { 
+  background-color: #f0f0f0; 
+  color: #555; 
+  font-family: 'Courier New', Courier, monospace; 
+  font-size: 0.85em; 
+  border-left: 3px solid var(--secondary-color);
+  border-radius: 4px;
+  width: 100%; 
+  box-sizing: border-box;
+}
 .message-wrapper.error .message-bubble { background-color: #f8d7da; color: #721c24; }
-.message-wrapper.system .message-bubble { text-align: center; background: none; color: #6c757d; font-style: italic; width: 100%; }
-.message-wrapper.system-break .message-break { width: 100%; border: 0; border-top: 1px solid var(--border-color); margin: 0; }
-
+.message-wrapper.system .message-bubble { text-align: center; background: none; color: #6c757d; font-style: italic; width: 100%; font-size: 0.9em; }
 
 .input-area {
   padding: 1rem;
@@ -105,10 +113,6 @@ body {
 .input-area input { flex-grow: 1; border: 1px solid #ccc; border-radius: 18px; padding: 0.75rem 1rem; font-size: 1rem; margin-right: 1rem; }
 .input-area button { background-color: var(--primary-color); color: white; border: none; border-radius: 18px; padding: 0.75rem 1.5rem; font-size: 1rem; cursor: pointer; font-weight: bold; }
 .input-area button:disabled { background-color: #a0bdf5; cursor: not-allowed; }
-
-.action-panel { padding: 1rem; text-align: center; border-top: 1px dashed var(--border-color); margin-top: 1rem;}
-.action-panel button { font-size: 1.1rem; }
-
 
 /* --- Workbench Styles --- */
 .workbench-container {
@@ -123,21 +127,8 @@ body {
 .workbench-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-color); }
 .workbench-header h3 { margin: 0; }
 .workbench-tabs { margin-top: 1rem; display: flex; border-bottom: 1px solid var(--border-color); }
-.workbench-tabs button { padding: 0.75rem 1rem; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--secondary-color); border-bottom: 3px solid transparent; border-radius: 0; }
-.workbench-tabs button.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+.workbench-tabs button { padding: 0.75rem 1rem; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--secondary-color); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.workbench-tabs button.active { color: var(--primary-color); border-bottom-color: var(--primary-color); font-weight: 600; }
 .workbench-content { flex-grow: 1; padding: 1.5rem; overflow-y: auto; line-height: 1.6; }
-.workbench-actions { padding: 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; }
+.workbench-actions { padding: 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 1rem; }
 .workbench-actions .next-button { background-color: #198754; }
-
-.loading-banner {
-    position: fixed;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    background-color: rgba(0,0,0,0.8);
-    color: white;
-    padding: 0.5rem 1.5rem;
-    border-radius: 6px 6px 0 0;
-    font-weight: bold;
-    z-index: 1000;
-}
